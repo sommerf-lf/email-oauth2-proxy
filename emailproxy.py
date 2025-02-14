@@ -81,6 +81,20 @@ if not no_gui_args.gui:
 del no_gui_parser
 del no_gui_args
 
+
+# function to check if the code is running as compiled binary (nuitka); this needs to be defined before some imports
+def is_nuitka_compiled():
+    """
+    Returns True if the code is running as a Nuitka-compiled binary,
+    otherwise returns False.
+    """
+    try:
+        # noinspection PyUnresolvedReferences
+        return __compiled__
+    except NameError:
+        return False
+
+
 try:
     # noinspection PyUnresolvedReferences
     from PIL import Image, ImageDraw, ImageFont  # draw the menu bar icon from the TTF font stored in APP_ICON
@@ -110,8 +124,9 @@ except ImportError:
         MISSING_GUI_REQUIREMENTS.append(gui_requirement_import_error)
 
 try:
-    # noinspection PyUnresolvedReferences
-    import packaging.version  # parse package version numbers - used to work around various GUI-only package issues
+    if not is_nuitka_compiled(): # expect current versions when nuitka is used, no need to check
+        # noinspection PyUnresolvedReferences
+        import packaging.version  # parse package version numbers - used to work around various GUI-only package issues
 except ImportError as gui_requirement_import_error:
     MISSING_GUI_REQUIREMENTS.append(gui_requirement_import_error)
 
@@ -2783,12 +2798,13 @@ class App:
 
     # noinspection PyDeprecation
     def create_icon(self):
-        # fix pystray <= 0.19.4 incompatibility with PIL 10.0.0+; resolved in 0.19.5 and later via pystray PR #147
-        pystray_version = packaging.version.Version(importlib_metadata.version('pystray'))
-        pillow_version = packaging.version.Version(importlib_metadata.version('pillow'))
-        if pystray_version <= packaging.version.Version('0.19.4') and \
-                pillow_version >= packaging.version.Version('10.0.0'):
-            Image.ANTIALIAS = Image.LANCZOS if hasattr(Image, 'LANCZOS') else Image.Resampling.LANCZOS
+        if not is_nuitka_compiled(): # expect current versions of pystray and pillow to be installed when nuitka is used
+            # fix pystray <= 0.19.4 incompatibility with PIL 10.0.0+; resolved in 0.19.5 and later via pystray PR #147
+            pystray_version = packaging.version.Version(importlib_metadata.version('pystray'))
+            pillow_version = packaging.version.Version(importlib_metadata.version('pillow'))
+            if pystray_version <= packaging.version.Version('0.19.4') and \
+                    pillow_version >= packaging.version.Version('10.0.0'):
+                Image.ANTIALIAS = Image.LANCZOS if hasattr(Image, 'LANCZOS') else Image.Resampling.LANCZOS
 
         icon_class = RetinaIcon if sys.platform == 'darwin' else pystray.Icon
         return icon_class(APP_NAME, App.get_image(), APP_NAME, menu=pystray.Menu(
@@ -2849,11 +2865,12 @@ class App:
     def get_icon_size(text, font_size):
         font = ImageFont.truetype(io.BytesIO(zlib.decompress(base64.b64decode(APP_ICON))), size=font_size)
 
-        # pillow's getsize method was deprecated in 9.2.0 (see docs for PIL.ImageFont.ImageFont.getsize)
-        if packaging.version.Version(importlib_metadata.version('pillow')) < packaging.version.Version('9.2.0'):
-            # noinspection PyUnresolvedReferences
-            font_width, font_height = font.getsize(text)
-            return font, font_width, font_height
+        if not is_nuitka_compiled(): # expect current version of pillow to be installed when nuitka is used
+            # pillow's getsize method was deprecated in 9.2.0 (see docs for PIL.ImageFont.ImageFont.getsize)
+            if packaging.version.Version(importlib_metadata.version('pillow')) < packaging.version.Version('9.2.0'):
+                # noinspection PyUnresolvedReferences
+                font_width, font_height = font.getsize(text)
+                return font, font_width, font_height
 
         _left, _top, right, bottom = font.getbbox(text)
         return font, right, bottom
@@ -2998,13 +3015,17 @@ class App:
             authorisation_window = webview.create_window(window_title, request['permission_url'], on_top=True)
         setattr(authorisation_window, 'get_title', lambda window: window.title)  # add missing get_title method
 
-        # pywebview 3.6+ moved window events to a separate namespace in a non-backwards-compatible way
-        pywebview_version = packaging.version.Version(importlib_metadata.version('pywebview'))
-        # the version zero check is due to a bug in the Ubuntu 24.04 python-pywebview package - see GitHub #242
-        if packaging.version.Version('0') < pywebview_version < packaging.version.Version('3.6'):
-            # noinspection PyUnresolvedReferences
-            authorisation_window.loaded += self.authorisation_window_loaded
+        if not is_nuitka_compiled(): # expect current version of pywebview to be installed when nuitka is used
+            # pywebview 3.6+ moved window events to a separate namespace in a non-backwards-compatible way
+            pywebview_version = packaging.version.Version(importlib_metadata.version('pywebview'))
+            # the version zero check is due to a bug in the Ubuntu 24.04 python-pywebview package - see GitHub #242
+            if packaging.version.Version('0') < pywebview_version < packaging.version.Version('3.6'):
+                # noinspection PyUnresolvedReferences
+                authorisation_window.loaded += self.authorisation_window_loaded
+            else:
+                authorisation_window.events.loaded += self.authorisation_window_loaded
         else:
+            # noinspection PyUnresolvedReferences
             authorisation_window.events.loaded += self.authorisation_window_loaded
 
     def handle_authorisation_windows(self):
@@ -3015,9 +3036,11 @@ class App:
         # pywebview window can get into a state in which http://localhost navigation, rather than failing, just hangs
         # noinspection PyPackageRequirements
         import webview.platforms.cocoa
-        pywebview_version = packaging.version.Version(importlib_metadata.version('pywebview'))
-        ProvisionalNavigationBrowserDelegate.pywebview_attr = 'webkit' if pywebview_version < packaging.version.Version(
-            '5.3') else 'webview'
+        if not is_nuitka_compiled(): # expect current pywebview version when nuitka is used
+            pywebview_version = packaging.version.Version(importlib_metadata.version('pywebview'))
+            ProvisionalNavigationBrowserDelegate.pywebview_attr = 'webkit' if pywebview_version < packaging.version.Version('5.3') else 'webview'
+        else:
+            ProvisionalNavigationBrowserDelegate.pywebview_attr = 'webview'
         setattr(webview.platforms.cocoa.BrowserView.BrowserDelegate, 'webView_didStartProvisionalNavigation_',
                 ProvisionalNavigationBrowserDelegate.webView_didStartProvisionalNavigation_)
         setattr(webview.platforms.cocoa.BrowserView.BrowserDelegate, 'webView_didReceiveServerRedirectForProvisional'
